@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+# -*- coding: utf8 -*-
 import argparse
 import os
 import numpy as np
