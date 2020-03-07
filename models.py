@@ -108,11 +108,37 @@ class VisualObservationModel(jit.ScriptModule):
     return observation
 
 
-def ObservationModel(symbolic, observation_size, belief_size, state_size, embedding_size, activation_function='relu'):
+class VisualAugmentedEncoderObservationModel(jit.ScriptModule):
+  __constants__ = ['embedding_size']
+  
+  def __init__(self, belief_size, state_size, embedding_size, activation_function='relu'):
+    super().__init__()
+    self.act_fn = getattr(F, activation_function)
+    self.embedding_size = embedding_size
+    self.fc1 = nn.Linear(belief_size + state_size, embedding_size)
+    self.conv1 = nn.ConvTranspose2d(embedding_size, 128, 5, stride=2)
+    self.conv2 = nn.ConvTranspose2d(128, 64, 5, stride=2)
+    self.conv3 = nn.ConvTranspose2d(64, 32, 6, stride=2)
+    self.conv4 = nn.ConvTranspose2d(32, 3, 6, stride=2)
+
+  @jit.script_method
+  def forward(self, belief, state):
+    hidden = self.fc1(torch.cat([belief, state], dim=1))  # No nonlinearity here
+    hidden = hidden.view(-1, self.embedding_size, 1, 1)
+    hidden = self.act_fn(self.conv1(hidden))
+    hidden = self.act_fn(self.conv2(hidden))
+    hidden = self.act_fn(self.conv3(hidden))
+    observation = self.conv4(hidden)
+    return observation
+
+
+
+def ObservationModel(symbolic, observation_size, belief_size, state_size, embedding_size, activation_function='relu', use_augemented=False):
   if symbolic:
     return SymbolicObservationModel(observation_size, belief_size, state_size, embedding_size, activation_function)
-  else:
-    return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
+  elif use_augemented:
+    return VisualAugmentedObservationModel(belief_size, state_size, embedding_size, activation_function)
+  return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
 
 
 class RewardModel(jit.ScriptModule):
@@ -171,8 +197,40 @@ class VisualEncoder(jit.ScriptModule):
     return hidden
 
 
-def Encoder(symbolic, observation_size, embedding_size, activation_function='relu'):
+
+class VisualAugmentedEncoder(jit.ScriptModule):
+  __constants__ = ['embedding_size']
+  
+  def __init__(self, embedding_size, activation_function='relu'):
+    super().__init__()
+    self.act_fn = getattr(F, activation_function)
+    self.embedding_size = embedding_size - 5
+    self.conv1 = nn.Conv2d(3, 32, 4, stride=2)
+    self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
+    self.conv3 = nn.Conv2d(64, 128, 4, stride=2)
+    self.conv4 = nn.Conv2d(128, 256, 4, stride=2)
+    self.fc = nn.Identity() if embedding_size == 1024 else nn.Linear(1024, embedding_size)
+
+  @jit.script_method
+  def forward(self, observation):
+    im, x = observation
+    hidden = self.act_fn(self.conv1(im))
+    hidden = self.act_fn(self.conv2(hidden))
+    hidden = self.act_fn(self.conv3(hidden))
+    hidden = self.act_fn(self.conv4(hidden))
+    hidden = hidden.view(-1, 1024)
+    hidden = self.fc(hidden)  # Identity if embedding size is 1024 else linear projection
+    return torch.cat([hidden, x], dim=-1)
+
+
+def Encoder(
+    symbolic,
+    observation_size,
+    embedding_size,
+    activation_function='relu',
+    use_augemented=False):
   if symbolic:
     return SymbolicEncoder(observation_size, embedding_size, activation_function)
-  else:
-    return VisualEncoder(embedding_size, activation_function)
+  elif use_augemented:
+    return VisualAugmentedEncoder(embedding_size, activation_function)
+  return VisualEncoder(embedding_size, activation_function)
