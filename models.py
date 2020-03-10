@@ -125,7 +125,7 @@ class VisualAugmentedObservationModel(jit.ScriptModule):
     self.conv1 = nn.ConvTranspose2d(embedding_size, 128, 5, stride=2)
     self.conv2 = nn.ConvTranspose2d(128, 64, 5, stride=2)
     self.conv3 = nn.ConvTranspose2d(64, 32, 6, stride=2)
-    self.conv4 = nn.ConvTranspose2d(32, 1, 6, stride=2)
+    self.conv4 = nn.ConvTranspose2d(32, 3, 6, stride=2)
     self.fc2 = nn.Linear(embedding_size, 5)
 
   @jit.script_method
@@ -135,7 +135,7 @@ class VisualAugmentedObservationModel(jit.ScriptModule):
     hidden = self.act_fn(self.conv1(hidden))
     hidden = self.act_fn(self.conv2(hidden))
     hidden = self.act_fn(self.conv3(hidden))
-    observation = self.conv4(hidden).repeat(1, 3, 1, 1)
+    observation = self.conv4(hidden)
     return observation, self.fc2(embedding)
 
 
