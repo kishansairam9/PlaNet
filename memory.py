@@ -1,14 +1,22 @@
-import numpy as np
+import pdb
 import torch
+import numpy as np
 from env import postprocess_observation, preprocess_observation_
 
 
 class ExperienceReplay():
-  def __init__(self, size, symbolic_env, observation_size, action_size, bit_depth, device):
+  def __init__(self, size, type_of_observation, observation_size, action_size, bit_depth, device):
     self.device = device
-    self.symbolic_env = symbolic_env
+    self.type_of_observation = type_of_observation
     self.size = size
-    self.observations = np.empty((size, observation_size) if symbolic_env else (size, 3, 64, 64), dtype=np.float32 if symbolic_env else np.uint8)
+    if type_of_observation == 'symbolic':
+      self.observations = np.empty((size, observation_size), dtype=np.float32)
+    elif type_of_observation == 'augmented':
+      self.observations = dict()
+      self.observations['i'] = np.empty((size, 3, 64, 64), dtype=np.uint8)
+      self.observations['x'] = np.empty((size, observation_size), dtype=np.float32)
+    else:
+      self.observations = np.empty((size, 3, 64, 64), dtype=np.uint8)
     self.actions = np.empty((size, action_size), dtype=np.float32)
     self.rewards = np.empty((size, ), dtype=np.float32) 
     self.nonterminals = np.empty((size, 1), dtype=np.float32)
@@ -18,10 +26,17 @@ class ExperienceReplay():
     self.bit_depth = bit_depth
 
   def append(self, observation, action, reward, done):
-    if self.symbolic_env:
-      self.observations[self.idx] = observation.numpy()
-    else:
-      self.observations[self.idx] = postprocess_observation(observation.numpy(), self.bit_depth)  # Decentre and discretise visual observations (to save memory)
+    try:
+      if self.type_of_observation == 'symbolic':
+        self.observations[self.idx] = observation.numpy()
+      elif self.type_of_observation == 'augmented':
+        self.observations['i'][self.idx] = postprocess_observation(observation[0].numpy(), self.bit_depth)
+        self.observations['x'][self.idx] = observation[1].numpy()
+      else:
+        self.observations[self.idx] = postprocess_observation(observation.numpy(), self.bit_depth)  # Decentre and discretise visual observations (to save memory)
+    except Exception as e:
+      print(e)
+      pdb.set_trace()
     self.actions[self.idx] = action.numpy()
     self.rewards[self.idx] = reward
     self.nonterminals[self.idx] = not done
@@ -39,13 +54,32 @@ class ExperienceReplay():
     return idxs
 
   def _retrieve_batch(self, idxs, n, L):
+    # print(self.type_of_observation)
     vec_idxs = idxs.transpose().reshape(-1)  # Unroll indices
+    if self.type_of_observation == 'augmented':
+      # pdb.set_trace()
+      img_obs = torch.as_tensor(self.observations['i'][vec_idxs].astype(np.float32))
+      preprocess_observation_(img_obs, self.bit_depth)
+      observations = (
+        img_obs.reshape(L, n, 3, 64, 64),
+        torch.as_tensor(self.observations['x'][vec_idxs].astype(np.float32)).reshape(L, n, *self.observations['x'].shape[1:])
+      )
+      return observations, self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.nonterminals[vec_idxs].reshape(L, n, 1)
+
     observations = torch.as_tensor(self.observations[vec_idxs].astype(np.float32))
-    if not self.symbolic_env:
+    if not self.type_of_observation == 'symbolic':
       preprocess_observation_(observations, self.bit_depth)  # Undo discretisation for visual observations
     return observations.reshape(L, n, *observations.shape[1:]), self.actions[vec_idxs].reshape(L, n, -1), self.rewards[vec_idxs].reshape(L, n), self.nonterminals[vec_idxs].reshape(L, n, 1)
 
   # Returns a batch of sequence chunks uniformly sampled from the memory
   def sample(self, n, L):
     batch = self._retrieve_batch(np.asarray([self._sample_idx(L) for _ in range(n)]), n, L)
-    return [torch.as_tensor(item).to(device=self.device) for item in batch]
+    if not self.type_of_observation == 'augmented':
+      return [torch.as_tensor(item).to(device=self.device) for item in batch]
+    return [
+      (torch.as_tensor(batch[0][0]).to(device=self.device),
+      torch.as_tensor(batch[0][1]).to(device=self.device)),
+      torch.as_tensor(batch[1]).to(device=self.device),
+      torch.as_tensor(batch[2]).to(device=self.device),
+      torch.as_tensor(batch[3]).to(device=self.device),
+    ]

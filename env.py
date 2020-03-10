@@ -1,7 +1,11 @@
 import cv2
 import numpy as np
 import torch
-
+import sys
+import pdb
+sys.path.append('C:\\Projects\\payload_manipulator')
+# print(sys.path)
+import payload_manipulation.src.payload_env_gym
 
 GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2']
 CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'finger-spin', 'cheetah-run', 'ball_in_cup-catch', 'walker-walk']
@@ -21,9 +25,9 @@ def postprocess_observation(observation, bit_depth):
 
 def _images_to_observation(images, bit_depth):
   images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32)  # Resize and put channel first
+  # pdb.set_trace()
   preprocess_observation_(images, bit_depth)  # Quantise, centre and dequantise inplace
   return images.unsqueeze(dim=0)  # Add batch dimension
-
 
 class ControlSuiteEnv():
   def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
@@ -88,22 +92,28 @@ class ControlSuiteEnv():
 
 
 class GymEnv():
-  def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+  def __init__(self, env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth, test_env=False):
     import gym
-    self.symbolic = symbolic
+    self.type_of_observation = type_of_observation
     self._env = gym.make(env)
     self._env.seed(seed)
     self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
     self.bit_depth = bit_depth
+    self._env.set_rendering(not test_env)
 
   def reset(self):
     self.t = 0  # Reset internal timer
     state = self._env.reset()
-    if self.symbolic:
+    # pdb.set_trace()
+    if self.type_of_observation == 'symbolic':
       return torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
-    else:
-      return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
+    elif self.type_of_observation == 'augmented':
+      return (
+          _images_to_observation(state[0], self.bit_depth),
+          torch.tensor(state[1], dtype=torch.float32).unsqueeze(dim=0)
+        )
+    return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
   
   def step(self, action):
     action = action.detach().numpy()
@@ -115,8 +125,13 @@ class GymEnv():
       done = done or self.t == self.max_episode_length
       if done:
         break
-    if self.symbolic:
+    if self.type_of_observation == 'symbolic':
       observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
+    elif self.type_of_observation == 'augmented':
+      observation = (
+          _images_to_observation(state[0], self.bit_depth),
+          torch.tensor(state[-1], dtype=torch.float32).unsqueeze(dim=0)
+        )
     else:
       observation = _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
     return observation, reward, done
@@ -129,7 +144,11 @@ class GymEnv():
 
   @property
   def observation_size(self):
-    return self._env.observation_space.shape[0] if self.symbolic else (3, 64, 64)
+    if self.type_of_observation == 'symbolic':
+      return self._env.observation_space.shape[0]
+    elif self.type_of_observation == 'augmented':
+      return self._env.observation_space.shape[0]
+    return (3, 64, 64)
 
   @property
   def action_size(self):
@@ -140,11 +159,11 @@ class GymEnv():
     return torch.from_numpy(self._env.action_space.sample())
 
 
-def Env(env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
-  if env in GYM_ENVS:
-    return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+def Env(env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth, test_env=False):
+  if env in GYM_ENVS or env == 'PayloadEnv-v0':
+    return GymEnv(env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth, test_env=test_env)
   elif env in CONTROL_SUITE_ENVS:
-    return ControlSuiteEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+    return ControlSuiteEnv(env, type_of_observation == 'symbolic', seed, max_episode_length, action_repeat, bit_depth)
 
 
 # Wrapper for batching environments together
@@ -153,11 +172,17 @@ class EnvBatcher():
     self.n = n
     self.envs = [env_class(*env_args, **env_kwargs) for _ in range(n)]
     self.dones = [True] * n
+    self.type_of_observation =  self.envs[0].type_of_observation
 
   # Resets every environment and returns observation
   def reset(self):
     observations = [env.reset() for env in self.envs]
     self.dones = [False] * self.n
+    if self.type_of_observation == 'augmented':
+      return (
+        torch.cat([o[0] for o in observations]),
+        torch.cat([o[1] for o in observations])
+      )
     return torch.cat(observations)
 
  # Steps/resets every environment and returns (observation, reward, done)
@@ -166,8 +191,17 @@ class EnvBatcher():
     observations, rewards, dones = zip(*[env.step(action) for env, action in zip(self.envs, actions)])
     dones = [d or prev_d for d, prev_d in zip(dones, self.dones)]  # Env should remain terminated if previously terminated
     self.dones = dones
-    observations, rewards, dones = torch.cat(observations), torch.tensor(rewards, dtype=torch.float32), torch.tensor(dones, dtype=torch.uint8)
-    observations[done_mask] = 0
+    if self.type_of_observation == 'augmented':
+      observations = (
+        torch.cat([o[0] for o in observations]),
+        torch.cat([o[1] for o in observations])
+      )
+      observations[0][done_mask] == 0
+      observations[1][done_mask] == 0
+    else:
+      observations = torch.cat(observations)
+      observations[done_mask] = 0
+    rewards, dones = torch.tensor(rewards, dtype=torch.float32), torch.tensor(dones, dtype=torch.uint8)
     rewards[done_mask] = 0
     return observations, rewards, dones
 
