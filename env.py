@@ -100,7 +100,10 @@ class GymEnv():
     self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
     self.bit_depth = bit_depth
-    self._env.set_rendering(not test_env)
+    try:
+      self._env.set_rendering(not test_env)
+    except:
+      pass
 
   def reset(self):
     self.t = 0  # Reset internal timer
