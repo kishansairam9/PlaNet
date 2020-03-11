@@ -117,13 +117,6 @@ reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, 
 encoder = Encoder(type_of_observation, env.observation_size, args.embedding_size, args.activation_function).to(device=args.device)
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
 optimiser = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.learning_rate, eps=args.adam_epsilon)
-
-if not args.disable_cuda and torch.cuda.is_available():
-  transition_model = torch.nn.DataParallel(transition_model)
-  observation_model = torch.nn.DataParallel(observation_model)
-  reward_model = torch.nn.DataParallel(reward_model)
-  encoder = torch.nn.DataParallel(encoder)
-
 if args.models is not '' and os.path.exists(args.models):
   model_dicts = torch.load(args.models)
   transition_model.load_state_dict(model_dicts['transition_model'])
