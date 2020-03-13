@@ -199,8 +199,8 @@ class EnvBatcher():
         torch.cat([o[0] for o in observations]),
         torch.cat([o[1] for o in observations])
       )
-      observations[0][done_mask] == 0
-      observations[1][done_mask] == 0
+      observations[0][done_mask] = 0
+      observations[1][done_mask] = 0
     else:
       observations = torch.cat(observations)
       observations[done_mask] = 0
