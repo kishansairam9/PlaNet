@@ -15,7 +15,7 @@ from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
 from planner import MPCPlanner
-from utils import lineplot, write_video
+from utils import lineplot, write_video, write_args
 
 
 # Hyperparameters
@@ -73,6 +73,9 @@ for k, v in vars(args).items():
 # Setup
 results_dir = os.path.join(args.results_dir, args.id)
 os.makedirs(results_dir, exist_ok=True)
+
+write_args(args, results_dir)
+
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
 if torch.cuda.is_available() and not args.disable_cuda:
@@ -162,14 +165,20 @@ if args.test:
     total_reward = 0
     for _ in tqdm(range(args.test_episodes)):
       observation = env.reset()
+      eps_rewards = 0
       belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
       pbar = tqdm(range(args.max_episode_length // args.action_repeat))
       for t in pbar:
-        belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device))
+        if env.type_of_observation == 'augmented':
+          belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, tuple(x.to(device=args.device) for x in observation))
+        else:
+          belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device))
         total_reward += reward
+        eps_rewards += reward
         if args.render:
           env.render()
         if done:
+          print(f'Episode Reward: {eps_rewards}')
           pbar.close()
           break
   print('Average Reward:', total_reward / args.test_episodes)
@@ -279,18 +288,17 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     encoder.eval()
     # Initialise parallelised test environments
     test_envs = EnvBatcher(Env, (args.env, type_of_observation, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {'test_env': True}, args.test_episodes)
-    
     with torch.no_grad():
       observation, total_rewards, video_frames = test_envs.reset(), np.zeros((args.test_episodes, )), []
       belief, posterior_state, action = torch.zeros(args.test_episodes, args.belief_size, device=args.device), torch.zeros(args.test_episodes, args.state_size, device=args.device), torch.zeros(args.test_episodes, env.action_size, device=args.device)
       pbar = tqdm(range(args.max_episode_length // args.action_repeat))
+      # import pdb; pdb.set_trace()
       for t in pbar:
         if type_of_observation == 'augmented':
           belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, test_envs, planner, transition_model, encoder, belief, posterior_state, action, tuple(x.to(device=args.device) for x in observation))
         else:
           belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, test_envs, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device))
         total_rewards += reward.numpy()
-        # import pdb; pdb.set_trace()
         if type_of_observation == 'augmented':
           video_frames.append(make_grid(torch.cat([observation[0], observation_model(belief, posterior_state)[0].cpu()], dim=3) + 0.5, nrow=5).numpy())
         if type_of_observation == 'not-symbolic':  # Collect real vs. predicted frames for video
@@ -299,6 +307,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         if done.sum().item() == args.test_episodes:
           pbar.close()
           break
+      # import pdb; pdb.set_trace()
     
     # Update and plot reward metrics (and write video if applicable) and save metrics
     metrics['test_episodes'].append(episode)

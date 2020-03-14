@@ -1,5 +1,6 @@
 import os
 import cv2
+import yaml
 import numpy as np
 import plotly
 from plotly.graph_objs import Scatter
@@ -37,3 +38,9 @@ def write_video(frames, title, path=''):
   for frame in frames:
     writer.write(frame)
   writer.release()
+
+def write_args(args, path=''):
+  args_file = os.path.join(path, 'args.yaml')
+  print(f'Writing args to {args_file}')
+  with open(args_file, 'w') as f:
+    f.write(yaml.dump(vars(args)))
