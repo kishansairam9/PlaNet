@@ -44,3 +44,6 @@ def write_args(args, path=''):
   print(f'Writing args to {args_file}')
   with open(args_file, 'w') as f:
     f.write(yaml.dump(vars(args)))
+
+def args_from_config(args, config_file):
+  args.__dict__.update(yaml.load(open(config_file, 'r')))
