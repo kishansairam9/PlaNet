@@ -15,7 +15,7 @@ from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
 from planner import MPCPlanner
-from utils import lineplot, write_video, write_args
+from utils import lineplot, write_video, write_args, args_from_config
 
 
 # Hyperparameters
@@ -66,7 +66,7 @@ parser.add_argument('--results_dir', default='results', type=str, help='Result d
 parser.add_argument('--args-from-yaml', type=str, help="Path of yaml file to load config from.")
 args = parser.parse_args()
 if args.args_from_yaml is not None:
-  utils.args_from_config(args, args.args_from_yaml)
+  args_from_config(args, args.args_from_yaml)
 
 args.overshooting_distance = min(args.chunk_size, args.overshooting_distance)  # Overshooting distance cannot be greater than chunk size
 print(' ' * 26 + 'Options')
