@@ -83,7 +83,7 @@ if torch.cuda.is_available() and not args.disable_cuda:
   torch.cuda.manual_seed(args.seed)
 else:
   args.device = torch.device('cpu')
-metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
+metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': [], 'test_success': []}
 
 
 # Initialise training environment and experience replay memory
@@ -307,6 +307,8 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         if done.sum().item() == args.test_episodes:
           pbar.close()
           break
+      metrics['test_success'].append(sum([e.success for e in test_envs.envs]))
+      lineplot(metrics['test_episodes'], metrics['test_success'], 'test_success', results_dir)
       # import pdb; pdb.set_trace()
     
     # Update and plot reward metrics (and write video if applicable) and save metrics
