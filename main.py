@@ -311,7 +311,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         if done.sum().item() == args.test_episodes:
           pbar.close()
           break
-      metrics['test_success'].append(sum([e.success for e in test_envs.envs]))
+      metrics['test_success'].append(sum([e._env.success for e in test_envs.envs]))
       lineplot(metrics['test_episodes'], metrics['test_success'], 'test_success', results_dir)
       # import pdb; pdb.set_trace()
     
