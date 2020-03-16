@@ -300,6 +300,17 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       for t in pbar:
         if type_of_observation == 'augmented':
           belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, test_envs, planner, transition_model, encoder, belief, posterior_state, action, tuple(x.to(device=args.device) for x in observation))
+          # print(done)
+          for i, d in ((i, d) for i, d in enumerate(done) if d):
+            # import pdb; pdb.set_trace()
+            if d:
+              obs = test_envs.envs[i].reset()
+              test_envs.dones[i] = False
+              observation[0][i], observation[1][i] = obs
+              belief[i] *= 0
+              action[i] *= 0
+              posterior_state[i] *= 0
+
         else:
           belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, test_envs, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device))
         total_rewards += reward.numpy()
