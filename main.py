@@ -107,7 +107,7 @@ elif not args.test:
   # Initialise dataset D with S random seed episodes
   for s in range(1, args.seed_episodes + 1):
     observation, done, t = env.reset(), False, 0
-    while not done:
+    while not (done or env.t == env.max_episode_length):
       action = env.sample_random_action()
       next_observation, reward, done = env.step(action)
       D.append(observation, action, reward, done)
