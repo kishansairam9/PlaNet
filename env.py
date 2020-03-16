@@ -125,8 +125,8 @@ class GymEnv():
       state, reward_k, done, _ = self._env.step(action)
       reward += reward_k
       self.t += 1  # Increment internal timer
-      done = done or self.t == self.max_episode_length
-      if done:
+      done = done
+      if done or self.t == self.max_episode_length:
         break
     if self.type_of_observation == 'symbolic':
       observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
