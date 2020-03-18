@@ -25,6 +25,8 @@ class TransitionModel(jit.ScriptModule):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
     self.min_std_dev = min_std_dev
+    self.fc_embed_to_belief1 = nn.Linear(embedding_size, hidden_size)
+    self.fc_embed_to_belief2 = nn.Linear(hidden_size, belief_size)
     self.fc_embed_state_action = nn.Linear(state_size + action_size, belief_size)
     self.rnn = nn.GRUCell(belief_size, belief_size)
     self.fc_embed_belief_prior = nn.Linear(belief_size, hidden_size)
@@ -48,6 +50,9 @@ class TransitionModel(jit.ScriptModule):
     T = actions.size(0) + 1
     beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T
     beliefs[0], prior_states[0], posterior_states[0] = prev_belief, prev_state, prev_state
+    if observations is not None:
+      hidden = self.act_fn(self.fc_embed_to_belief1(observations[0]))
+      beliefs[0] = self.act_fn(self.fc_embed_to_belief2(hidden))
     # Loop over time sequence
     for t in range(T - 1):
       _state = prior_states[t] if observations is None else posterior_states[t]  # Select appropriate previous state
