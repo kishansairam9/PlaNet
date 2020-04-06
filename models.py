@@ -122,7 +122,7 @@ class VisualObservationModel(jit.ScriptModule):
 class VisualAugmentedObservationModel(jit.ScriptModule):
   __constants__ = ['embedding_size']
   
-  def __init__(self, belief_size, state_size, embedding_size, activation_function='relu'):
+  def __init__(self, belief_size, state_size, embedding_size, x_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
     self.embedding_size = embedding_size
@@ -131,7 +131,7 @@ class VisualAugmentedObservationModel(jit.ScriptModule):
     self.conv2 = nn.ConvTranspose2d(128, 64, 5, stride=2)
     self.conv3 = nn.ConvTranspose2d(64, 32, 6, stride=2)
     self.conv4 = nn.ConvTranspose2d(32, 3, 6, stride=2)
-    self.fc2 = nn.Linear(embedding_size, 5)
+    self.fc2 = nn.Linear(embedding_size, x_size)
 
   @jit.script_method
   def forward(self, belief, state):
@@ -149,7 +149,7 @@ def ObservationModel(type_of_observation, observation_size, belief_size, state_s
   if type_of_observation == 'symbolic':
     return SymbolicObservationModel(observation_size, belief_size, state_size, embedding_size, activation_function)
   elif type_of_observation == 'augmented':
-    return VisualAugmentedObservationModel(belief_size, state_size, embedding_size, activation_function)
+    return VisualAugmentedObservationModel(belief_size, state_size, embedding_size, observation_size, activation_function)
   return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
 
 
@@ -213,10 +213,10 @@ class VisualEncoder(jit.ScriptModule):
 class VisualAugmentedEncoder(jit.ScriptModule):
   __constants__ = ['embedding_size']
   
-  def __init__(self, embedding_size, activation_function='relu'):
+  def __init__(self, embedding_size, x_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
-    self.embedding_size = embedding_size - 5
+    self.embedding_size = embedding_size - x_size
     self.conv1 = nn.Conv2d(3, 32, 4, stride=2)
     self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
     self.conv3 = nn.Conv2d(64, 128, 4, stride=2)
@@ -243,5 +243,5 @@ def Encoder(
   if type_of_observation == 'symbolic':
     return SymbolicEncoder(observation_size, embedding_size, activation_function)
   elif type_of_observation == 'augmented':
-    return VisualAugmentedEncoder(embedding_size, activation_function)
+    return VisualAugmentedEncoder(embedding_size, observation_size, activation_function)
   return VisualEncoder(embedding_size, activation_function)

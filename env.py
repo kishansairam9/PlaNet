@@ -3,9 +3,13 @@ import numpy as np
 import torch
 import sys
 import pdb
-sys.path.append('C:\\Projects\\payload_manipulator')
+from pathlib import Path
+# sys.path.append('C:\\Projects\\payload_manipulator')
+sys.path.append(str(Path(__file__).parent.parent))
 # print(sys.path)
-import payload_manipulation.src.payload_env_gym
+# import payload_manipulation.src.payload_env_gym
+import payload_manipulation.envs
+CUSTOM_ENVS = payload_manipulation.envs.CUSTOM_ENVS
 
 GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2']
 CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'finger-spin', 'cheetah-run', 'ball_in_cup-catch', 'walker-walk']
@@ -163,7 +167,7 @@ class GymEnv():
 
 
 def Env(env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth, test_env=False):
-  if env in GYM_ENVS or env == 'PayloadEnv-v0':
+  if env in GYM_ENVS or env in CUSTOM_ENVS:
     return GymEnv(env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth, test_env=test_env)
   elif env in CONTROL_SUITE_ENVS:
     return ControlSuiteEnv(env, type_of_observation == 'symbolic', seed, max_episode_length, action_repeat, bit_depth)
