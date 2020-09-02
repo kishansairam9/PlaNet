@@ -1,12 +1,16 @@
 name: planet
 channels:
-  - pytorch
+  - anaconda
+  - conda-forge
 dependencies:
   - plotly
-  - pytorch
+  - pytorch-gpu
   - torchvision
   - tqdm
   - pip
+  - tensorflow-gpu
   - pip:
     - gym
     - opencv-python
+    - mlagents
+    - gym_unity
