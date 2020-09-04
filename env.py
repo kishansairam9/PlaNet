@@ -31,7 +31,7 @@ class UnityGymEnv():
     import gym
     gym.logger.set_level(logging.ERROR)  # Ignore warnings from Gym logger
     self.symbolic = symbolic
-    self._env = UnityToGymWrapper(unity_env, 0, uint8_visual=True)
+    self._env = UnityToGymWrapper(unity_env=unity_env, uint8_visual=True)
     self._env.seed(seed)
     self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
