@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import torch
 from gym_unity.envs import UnityToGymWrapper
+from gym.spaces import MultiDiscrete, Box
 
 GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2']
 CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'finger-spin', 'cheetah-run', 'ball_in_cup-catch', 'walker-walk']
@@ -25,13 +26,43 @@ def _images_to_observation(images, bit_depth):
   return images.unsqueeze(dim=0)  # Add batch dimension
 
 
+class UnityContinuousActionWrapper(UnityToGymWrapper):
+  """
+  Ensures that the action space of unity envs is exposed as continuous.
+  Has effect only if the actionspace is MultiDiscrete.
+  """
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.pseudo_action_space = None
+    if isinstance(super().action_space, MultiDiscrete):
+      self.action_spec = super().action_space.nvec
+      self.pseudo_action_space = Box(np.zeros_like(self.action_spec), np.ones_like(self.action_spec))
+      self.discretiser = self.make_discretiser()
+
+  @property
+  def action_space(self):
+    if self.pseudo_action_space is None:
+      return super().action_space
+    return self.pseudo_action_space
+
+  def step(self, action):
+    if self.pseudo_action_space is not None:
+      action = [self.discretiser(a) for a in action]
+    return super().step(action)
+
+  def make_discretiser(self):
+    def func(x):
+      return (x * self.action_spec).astype('i')
+    return func
+
+
 class UnityGymEnv():
   def __init__(self, unity_env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
     import logging
     import gym
     gym.logger.set_level(logging.ERROR)  # Ignore warnings from Gym logger
     self.symbolic = symbolic
-    self._env = UnityToGymWrapper(unity_env=unity_env, uint8_visual=True)
+    self._env = UnityContinuousActionWrapper(unity_env=unity_env, uint8_visual=True)
     self._env.seed(seed)
     self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
