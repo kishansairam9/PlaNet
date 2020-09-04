@@ -15,7 +15,7 @@ from models import bottle, Encoder, ObservationModel, RewardModel, TransitionMod
 from planner import MPCPlanner
 from utils import lineplot, write_video
 
-UnityOnly = False
+UnityOnly = True
 
 # Hyperparameters
 parser = argparse.ArgumentParser(description='PlaNet')
@@ -86,6 +86,7 @@ metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': []
 if UnityOnly:
   def env_returner(param: str):
     # Check unity_envs folder for executable
+    from mlagents_envs.environment import UnityEnvironment
     if os.path.exists(param):
       return UnityEnvironment(param)
     else:
