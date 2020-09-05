@@ -56,7 +56,7 @@ class UnityContinuousActionWrapper(UnityToGymWrapper):
     return func
 
 
-class UnityGymEnv():
+class UnityGymEnv:
   def __init__(self, unity_env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
     import logging
     import gym
@@ -279,3 +279,11 @@ class EnvBatcher():
 
   def close(self):
     [env.close() for env in self.envs]
+
+
+class UnityEnvBatcher(EnvBatcher):
+  def __init__(self, env_creator, n, start_port=None):
+    self.n = n
+    self.start_port = start_port or 9000
+    self.envs = [env_creator(self.start_port + i) for i in range(n)]
+    self.dones = [True] * n
