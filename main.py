@@ -9,7 +9,7 @@ from torch.distributions.kl import kl_divergence
 from torch.nn import functional as F
 from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
-from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher, UnityGymEnv
+from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher, UnityGymEnv, UnityEnvBatcher
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
 from planner import MPCPlanner
@@ -84,11 +84,11 @@ else:
 metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
 
 if UnityOnly:
-  def env_returner(param: str):
+  def env_returner(param: str, port: int = None):
     # Check unity_envs folder for executable
     from mlagents_envs.environment import UnityEnvironment
     if os.path.exists(param):
-      return UnityEnvironment(param)
+      return UnityEnvironment(param, base_port=port)
     else:
       # Try infering env using env_id from default_registry
       from mlagents_envs.registry import default_registry
@@ -264,7 +264,18 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     reward_model.eval()
     encoder.eval()
     # Initialise parallelised test environments
-    test_envs = EnvBatcher(Env, (args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {}, args.test_episodes)
+    if UnityOnly:
+      def unity_gyn_emv_creator(port):
+        return UnityGymEnv(
+          env_returner(args.env, port),
+          args.symbolic_env,
+          args.seed,
+          args.max_episode_length,
+          args.action_repeat,
+          args.bit_depth)
+      test_envs = UnityEnvBatcher(unity_gyn_emv_creator, args.test_episodes)
+    else:
+      test_envs = EnvBatcher(Env, (args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {}, args.test_episodes)
     
     with torch.no_grad():
       observation, total_rewards, video_frames = test_envs.reset(), np.zeros((args.test_episodes, )), []
