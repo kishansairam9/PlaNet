@@ -23,7 +23,7 @@ parser.add_argument('--id', type=str, default='default', help='Experiment ID')
 parser.add_argument('--seed', type=int, default=1, metavar='S', help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
 if UnityOnly:
-  parser.add_argument('--env', type=str, default='GridWorld', help="Provide path to Unity Environment executable. If file doesn't exist, then tries to infer this string as env_id from default unity registry")
+  parser.add_argument('--env', type=str, default=None, help="Provide path to Unity Environment executable. If file doesn't exist, then tries to infer this string as env_id from default unity registry")
 else:
   parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS + CONTROL_SUITE_ENVS, help='Gym/Control Suite environment')
 parser.add_argument('--symbolic-env', action='store_true', help='Symbolic features')
@@ -87,6 +87,8 @@ if UnityOnly:
   def env_returner(param: str, port: int = None):
     # Check unity_envs folder for executable
     from mlagents_envs.environment import UnityEnvironment
+    if not param:
+      return UnityEnvironment(None, base_port=port)
     if os.path.exists(param):
       return UnityEnvironment(param, base_port=port)
     else:
