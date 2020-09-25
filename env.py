@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from gym_unity.envs import UnityToGymWrapper
 from gym.spaces import MultiDiscrete, Box
+import pdb
 
 GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2']
 CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'finger-spin', 'cheetah-run', 'ball_in_cup-catch', 'walker-walk']
@@ -57,12 +58,12 @@ class UnityContinuousActionWrapper(UnityToGymWrapper):
 
 
 class UnityGymEnv:
-  def __init__(self, unity_env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+  def __init__(self, unity_env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth):
     import logging
     import gym
     gym.logger.set_level(logging.ERROR)  # Ignore warnings from Gym logger
-    self.symbolic = symbolic
-    self._env = UnityContinuousActionWrapper(unity_env=unity_env, uint8_visual=True)
+    self.type_of_observation = type_of_observation
+    self._env = UnityContinuousActionWrapper(unity_env=unity_env, uint8_visual=True, allow_multiple_obs=True)
     self._env.seed(seed)
     self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
@@ -71,10 +72,18 @@ class UnityGymEnv:
   def reset(self):
     self.t = 0  # Reset internal timer
     state = self._env.reset()
-    if self.symbolic:
+    if self.type_of_observation == 'symbolic':
       return torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
-    else:
-      return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
+    elif self.type_of_observation == 'augmented':
+      try:
+        return (
+          _images_to_observation(state[0], self.bit_depth),
+          torch.tensor(state[1], dtype=torch.float32).unsqueeze(dim=0)
+        )
+      except Exception as e:
+        print(e)
+        pdb.set_trace()
+    return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
   
   def step(self, action):
     action = action.detach().numpy()
@@ -86,8 +95,13 @@ class UnityGymEnv:
       done = done or self.t == self.max_episode_length
       if done:
         break
-    if self.symbolic:
+    if self.type_of_observation == 'symbolic':
       observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
+    elif self.type_of_observation == 'augmented':
+      observation = (
+        _images_to_observation(state[0], self.bit_depth),
+        torch.tensor(state[-1], dtype=torch.float32).unsqueeze(dim=0)
+      )
     else:
       observation = _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
     return observation, reward, done
@@ -100,7 +114,11 @@ class UnityGymEnv:
 
   @property
   def observation_size(self):
-    return self._env.observation_space.shape[0] if self.symbolic else (3, 64, 64)
+    if self.type_of_observation == 'symbolic':
+      return self._env.observation_space.shape[0]
+    elif self.type_of_observation == 'augmented':
+      return self._env.observation_space[-1].shape[0]
+    return (3, 64, 64)
 
   @property
   def action_size(self):
@@ -236,7 +254,7 @@ class GymEnv():
     if self.type_of_observation == 'symbolic':
       return self._env.observation_space.shape[0]
     elif self.type_of_observation == 'augmented':
-      return self._env.observation_space.shape[0]
+      return self._env.observation_space[-1].shape[0]
     return (3, 64, 64)
 
   @property
