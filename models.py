@@ -8,6 +8,12 @@ from torch.nn import functional as F
 def bottle(f, x_tuple):
   x_sizes = tuple(map(lambda x: x.size(), x_tuple))
   y = f(*map(lambda x: x[0].view(x[1][0] * x[1][1], *x[1][2:]), zip(x_tuple, x_sizes)))
+  if isinstance(y, tuple):
+    a, b = y
+    return (
+      a.view(x_sizes[0][0], x_sizes[0][1], *a.size()[1:]),
+      b.view(x_sizes[0][0], x_sizes[0][1], *b.size()[1:]),
+    )
   y_size = y.size()
   return y.view(x_sizes[0][0], x_sizes[0][1], *y_size[1:])
 
@@ -19,6 +25,8 @@ class TransitionModel(jit.ScriptModule):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
     self.min_std_dev = min_std_dev
+    self.fc_embed_to_belief1 = nn.Linear(embedding_size, hidden_size)
+    self.fc_embed_to_belief2 = nn.Linear(hidden_size, belief_size)
     self.fc_embed_state_action = nn.Linear(state_size + action_size, belief_size)
     self.rnn = nn.GRUCell(belief_size, belief_size)
     self.fc_embed_belief_prior = nn.Linear(belief_size, hidden_size)
@@ -42,6 +50,9 @@ class TransitionModel(jit.ScriptModule):
     T = actions.size(0) + 1
     beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T, [torch.empty(0)] * T
     beliefs[0], prior_states[0], posterior_states[0] = prev_belief, prev_state, prev_state
+    if observations is not None:
+      hidden = self.act_fn(self.fc_embed_to_belief1(observations[0]))
+      beliefs[0] = self.act_fn(self.fc_embed_to_belief2(hidden))
     # Loop over time sequence
     for t in range(T - 1):
       _state = prior_states[t] if observations is None else posterior_states[t]  # Select appropriate previous state
@@ -108,11 +119,38 @@ class VisualObservationModel(jit.ScriptModule):
     return observation
 
 
-def ObservationModel(symbolic, observation_size, belief_size, state_size, embedding_size, activation_function='relu'):
-  if symbolic:
+class VisualAugmentedObservationModel(jit.ScriptModule):
+  __constants__ = ['embedding_size']
+
+  def __init__(self, belief_size, state_size, embedding_size, x_size, activation_function='relu'):
+    super().__init__()
+    self.act_fn = getattr(F, activation_function)
+    self.embedding_size = embedding_size
+    self.fc1 = nn.Linear(belief_size + state_size, embedding_size)
+    self.conv1 = nn.ConvTranspose2d(embedding_size, 128, 5, stride=2)
+    self.conv2 = nn.ConvTranspose2d(128, 64, 5, stride=2)
+    self.conv3 = nn.ConvTranspose2d(64, 32, 6, stride=2)
+    self.conv4 = nn.ConvTranspose2d(32, 3, 6, stride=2)
+    self.fc2 = nn.Linear(embedding_size, x_size)
+
+  @jit.script_method
+  def forward(self, belief, state):
+    embedding = self.fc1(torch.cat([belief, state], dim=1))  # No nonlinearity here
+    hidden = embedding.view(-1, self.embedding_size, 1, 1)
+    hidden = self.act_fn(self.conv1(hidden))
+    hidden = self.act_fn(self.conv2(hidden))
+    hidden = self.act_fn(self.conv3(hidden))
+    observation = self.conv4(hidden)
+    return observation, self.fc2(embedding)
+
+
+
+def ObservationModel(type_of_observation, observation_size, belief_size, state_size, embedding_size, activation_function='relu', use_augemented=False):
+  if type_of_observation == 'symbolic':
     return SymbolicObservationModel(observation_size, belief_size, state_size, embedding_size, activation_function)
-  else:
-    return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
+  elif type_of_observation == 'augmented':
+    return VisualAugmentedObservationModel(belief_size, state_size, embedding_size, observation_size, activation_function)
+  return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
 
 
 class RewardModel(jit.ScriptModule):
@@ -171,8 +209,39 @@ class VisualEncoder(jit.ScriptModule):
     return hidden
 
 
-def Encoder(symbolic, observation_size, embedding_size, activation_function='relu'):
-  if symbolic:
+
+class VisualAugmentedEncoder(jit.ScriptModule):
+  __constants__ = ['embedding_size']
+
+  def __init__(self, embedding_size, x_size, activation_function='relu'):
+    super().__init__()
+    self.act_fn = getattr(F, activation_function)
+    self.embedding_size = embedding_size - x_size
+    self.conv1 = nn.Conv2d(3, 32, 4, stride=2)
+    self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
+    self.conv3 = nn.Conv2d(64, 128, 4, stride=2)
+    self.conv4 = nn.Conv2d(128, 256, 4, stride=2)
+    self.fc = nn.Identity() if self.embedding_size == 1024 else nn.Linear(1024, self.embedding_size)
+
+  @jit.script_method
+  def forward(self, im, x):
+    hidden = self.act_fn(self.conv1(im))
+    hidden = self.act_fn(self.conv2(hidden))
+    hidden = self.act_fn(self.conv3(hidden))
+    hidden = self.act_fn(self.conv4(hidden))
+    hidden = hidden.view(-1, 1024)
+    hidden = self.fc(hidden)
+    return torch.cat([hidden, x], dim=-1)
+
+
+def Encoder(
+    type_of_observation,
+    observation_size,
+    embedding_size,
+    activation_function='relu',
+    use_augemented=False):
+  if type_of_observation == 'symbolic':
     return SymbolicEncoder(observation_size, embedding_size, activation_function)
-  else:
-    return VisualEncoder(embedding_size, activation_function)
+  elif type_of_observation == 'augmented':
+    return VisualAugmentedEncoder(embedding_size, observation_size, activation_function)
+  return VisualEncoder(embedding_size, activation_function)

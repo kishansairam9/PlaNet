@@ -83,6 +83,13 @@ else:
   args.device = torch.device('cpu')
 metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
 
+if args.symbolic_env:
+  type_of_observation = 'symbolic'
+elif args.env in GYM_ENVS + CONTROL_SUITE_ENVS:
+  type_of_observation = 'not-symbolic'
+else:
+  type_of_observation = 'augmented'
+
 if UnityOnly:
   def env_returner(param: str, port: int = None):
     # Check unity_envs folder for executable
@@ -96,10 +103,10 @@ if UnityOnly:
       from mlagents_envs.registry import default_registry
       return default_registry[param].make()
 
-  env = UnityGymEnv(env_returner(args.env), args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat,
+  env = UnityGymEnv(env_returner(args.env), type_of_observation, args.seed, args.max_episode_length, args.action_repeat,
             args.bit_depth)
 else:
-  env = Env(args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth)
+  env = Env(args.env, type_of_observation, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth)
 
 
 # Initialise training environment and experience replay memory
@@ -107,7 +114,7 @@ if args.experience_replay is not '' and os.path.exists(args.experience_replay):
   D = torch.load(args.experience_replay)
   metrics['steps'], metrics['episodes'] = [D.steps] * D.episodes, list(range(1, D.episodes + 1))
 elif not args.test:
-  D = ExperienceReplay(args.experience_size, args.symbolic_env, env.observation_size, env.action_size, args.bit_depth, args.device)
+  D = ExperienceReplay(args.experience_size, type_of_observation, env.observation_size, env.action_size, args.bit_depth, args.device)
   # Initialise dataset D with S random seed episodes
   for s in range(1, args.seed_episodes + 1):
     observation, done, t = env.reset(), False, 0
@@ -123,9 +130,9 @@ elif not args.test:
 
 # Initialise model parameters randomly
 transition_model = TransitionModel(args.belief_size, args.state_size, env.action_size, args.hidden_size, args.embedding_size, args.activation_function).to(device=args.device)
-observation_model = ObservationModel(args.symbolic_env, env.observation_size, args.belief_size, args.state_size, args.embedding_size, args.activation_function).to(device=args.device)
+observation_model = ObservationModel(type_of_observation, env.observation_size, args.belief_size, args.state_size, args.embedding_size, args.activation_function).to(device=args.device)
 reward_model = RewardModel(args.belief_size, args.state_size, args.hidden_size, args.activation_function).to(device=args.device)
-encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, args.activation_function).to(device=args.device)
+encoder = Encoder(type_of_observation, env.observation_size, args.embedding_size, args.activation_function).to(device=args.device)
 param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(reward_model.parameters()) + list(encoder.parameters())
 optimiser = optim.Adam(param_list, lr=0 if args.learning_rate_schedule != 0 else args.learning_rate, eps=args.adam_epsilon)
 if args.models is not '' and os.path.exists(args.models):
@@ -139,10 +146,20 @@ planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_i
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1, ), args.free_nats, dtype=torch.float32, device=args.device)  # Allowed deviation in KL divergence
 
+def update_belief_and_act(*args, **kwargs):
+  try:
+    return _update_belief_and_act(*args, **kwargs)
+  except Exception as e:
+    print(e)
+    import pdb
+    pdb.set_trace()
 
-def update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation, min_action=-inf, max_action=inf, explore=False):
+def _update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation, min_action=-inf, max_action=inf, explore=False):
   # Infer belief over current state q(s_t|o≤t,a<t) from the history
-  belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
+  if type_of_observation == 'augmented':
+    belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(*observation).unsqueeze(dim=0))
+  else:
+    belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
   belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
   action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
   if explore:
@@ -165,7 +182,10 @@ if args.test:
       belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
       pbar = tqdm(range(args.max_episode_length // args.action_repeat))
       for t in pbar:
-        belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), env.action_range[0], env.action_range[1])
+        if env.type_of_observation == 'augmented':
+          belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, tuple(x.to(device=args.device) for x in observation), env.action_range[0], env.action_range[1])
+        else:
+          belief, posterior_state, action, observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), env.action_range[0], env.action_range[1])
         total_reward += reward
         if args.render:
           env.render()
@@ -187,9 +207,17 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # Create initial belief and state for time t = 0
     init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
-    beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
+    if env.type_of_observation == 'augmented':
+      beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[0][1:].float(), observations[1][1:])), nonterminals[:-1])
+    else:
+      beliefs, prior_states, prior_means, prior_std_devs, posterior_states, posterior_means, posterior_std_devs = transition_model(init_state, actions[:-1], init_belief, bottle(encoder, (observations[1:], )), nonterminals[:-1])
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
-    observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
+    # pdb.set_trace()
+    if type_of_observation == 'augmented':
+      reconstructed_img, reconstructed_stt = bottle(observation_model, (beliefs, posterior_states))
+      observation_loss = F.mse_loss(reconstructed_img, observations[0][1:],reduction='none').sum(dim=(2, 3, 4)).mean(dim=(0, 1)) + F.mse_loss(reconstructed_stt, observations[1][1:], reduction='none').sum(dim=2).mean(dim=(0, 1))
+    else:
+      observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
     kl_loss = torch.max(kl_divergence(Normal(posterior_means, posterior_std_devs), Normal(prior_means, prior_std_devs)).sum(dim=2), free_nats).mean(dim=(0, 1))  # Note that normalisation by overshooting distance and weighting by overshooting distance cancel out
     if args.global_kl_beta != 0:
@@ -241,7 +269,10 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
     pbar = tqdm(range(args.max_episode_length // args.action_repeat))
     for t in pbar:
-      belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), env.action_range[0], env.action_range[1], explore=True)
+      if type_of_observation == 'augmented':
+        belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, tuple(x.to(device=args.device) for x in observation), env.action_range[0], env.action_range[1], explore=True)
+      else:
+        belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), env.action_range[0], env.action_range[1], explore=True)
       D.append(observation, action.cpu(), reward, done)
       total_reward += reward
       observation = next_observation
@@ -270,23 +301,39 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       def unity_gyn_emv_creator(port):
         return UnityGymEnv(
           env_returner(args.env, port),
-          args.symbolic_env,
+          type_of_observation,
           args.seed,
           args.max_episode_length,
           args.action_repeat,
           args.bit_depth)
       test_envs = UnityEnvBatcher(unity_gyn_emv_creator, args.test_episodes)
     else:
-      test_envs = EnvBatcher(Env, (args.env, args.symbolic_env, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {}, args.test_episodes)
+      test_envs = EnvBatcher(Env, (args.env, type_of_observation, args.seed, args.max_episode_length, args.action_repeat, args.bit_depth), {}, args.test_episodes)
     
     with torch.no_grad():
       observation, total_rewards, video_frames = test_envs.reset(), np.zeros((args.test_episodes, )), []
       belief, posterior_state, action = torch.zeros(args.test_episodes, args.belief_size, device=args.device), torch.zeros(args.test_episodes, args.state_size, device=args.device), torch.zeros(args.test_episodes, env.action_size, device=args.device)
       pbar = tqdm(range(args.max_episode_length // args.action_repeat))
       for t in pbar:
-        belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, test_envs, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), env.action_range[0], env.action_range[1])
+        if type_of_observation == 'augmented':
+          belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, test_envs, planner, transition_model, encoder, belief, posterior_state, action, tuple(x.to(device=args.device) for x in observation), env.action_range[0], env.action_range[1])
+          # print(done)
+          for i, d in ((i, d) for i, d in enumerate(done) if d):
+            # import pdb; pdb.set_trace()
+            if d:
+              obs = test_envs.envs[i].reset()
+              test_envs.dones[i] = False
+              observation[0][i], observation[1][i] = obs
+              belief[i] *= 0
+              action[i] *= 0
+              posterior_state[i] *= 0
+
+        else:
+          belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, test_envs, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), env.action_range[0], env.action_range[1])
         total_rewards += reward.numpy()
-        if not args.symbolic_env:  # Collect real vs. predicted frames for video
+        if type_of_observation == 'augmented':
+          video_frames.append(make_grid(torch.cat([observation[0], observation_model(belief, posterior_state)[0].cpu()], dim=3) + 0.5, nrow=5).numpy())
+        if type_of_observation == 'not-symbolic':  # Collect real vs. predicted frames for video
           video_frames.append(make_grid(torch.cat([observation, observation_model(belief, posterior_state).cpu()], dim=3) + 0.5, nrow=5).numpy())  # Decentre
         observation = next_observation
         if done.sum().item() == args.test_episodes:

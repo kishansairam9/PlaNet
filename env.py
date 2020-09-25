@@ -127,17 +127,14 @@ class ControlSuiteEnv():
     self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
     if action_repeat != CONTROL_SUITE_ACTION_REPEATS[domain]:
-      print('Using action repeat %d; recommended action repeat for domain is %d' % (
-      action_repeat, CONTROL_SUITE_ACTION_REPEATS[domain]))
+      print('Using action repeat %d; recommended action repeat for domain is %d' % (action_repeat, CONTROL_SUITE_ACTION_REPEATS[domain]))
     self.bit_depth = bit_depth
 
   def reset(self):
     self.t = 0  # Reset internal timer
     state = self._env.reset()
     if self.symbolic:
-      return torch.tensor(
-        np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()],
-                       axis=0), dtype=torch.float32).unsqueeze(dim=0)
+      return torch.tensor(np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
       return _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
 
@@ -152,9 +149,7 @@ class ControlSuiteEnv():
       if done:
         break
     if self.symbolic:
-      observation = torch.tensor(
-        np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()],
-                       axis=0), dtype=torch.float32).unsqueeze(dim=0)
+      observation = torch.tensor(np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
       observation = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
     return observation, reward, done
@@ -169,8 +164,7 @@ class ControlSuiteEnv():
 
   @property
   def observation_size(self):
-    return sum([(1 if len(obs.shape) == 0 else obs.shape[0]) for obs in
-                self._env.observation_spec().values()]) if self.symbolic else (3, 64, 64)
+    return sum([(1 if len(obs.shape) == 0 else obs.shape[0]) for obs in self._env.observation_spec().values()]) if self.symbolic else (3, 64, 64)
 
   @property
   def action_size(self):
@@ -188,11 +182,10 @@ class ControlSuiteEnv():
 
 
 class GymEnv():
-  def __init__(self, env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+  def __init__(self, env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth):
     import logging
     import gym
-    gym.logger.set_level(logging.ERROR)  # Ignore warnings from Gym logger
-    self.symbolic = symbolic
+    self.type_of_observation = type_of_observation
     self._env = gym.make(env)
     self._env.seed(seed)
     self.max_episode_length = max_episode_length
@@ -202,10 +195,14 @@ class GymEnv():
   def reset(self):
     self.t = 0  # Reset internal timer
     state = self._env.reset()
-    if self.symbolic:
+    if self.type_of_observation == 'symbolic':
       return torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
-    else:
-      return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
+    elif self.type_of_observation == 'augmented':
+      return (
+          _images_to_observation(state[0], self.bit_depth),
+          torch.tensor(state[1], dtype=torch.float32).unsqueeze(dim=0)
+        )
+    return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
 
   def step(self, action):
     action = action.detach().numpy()
@@ -214,11 +211,16 @@ class GymEnv():
       state, reward_k, done, _ = self._env.step(action)
       reward += reward_k
       self.t += 1  # Increment internal timer
-      done = done or self.t == self.max_episode_length
-      if done:
+      done = done
+      if done or self.t == self.max_episode_length:
         break
-    if self.symbolic:
+    if self.type_of_observation == 'symbolic':
       observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
+    elif self.type_of_observation == 'augmented':
+      observation = (
+          _images_to_observation(state[0], self.bit_depth),
+          torch.tensor(state[-1], dtype=torch.float32).unsqueeze(dim=0)
+        )
     else:
       observation = _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
     return observation, reward, done
@@ -231,7 +233,11 @@ class GymEnv():
 
   @property
   def observation_size(self):
-    return self._env.observation_space.shape[0] if self.symbolic else (3, 64, 64)
+    if self.type_of_observation == 'symbolic':
+      return self._env.observation_space.shape[0]
+    elif self.type_of_observation == 'augmented':
+      return self._env.observation_space.shape[0]
+    return (3, 64, 64)
 
   @property
   def action_size(self):
@@ -246,11 +252,12 @@ class GymEnv():
     return torch.from_numpy(self._env.action_space.sample())
 
 
-def Env(env, symbolic, seed, max_episode_length, action_repeat, bit_depth):
+def Env(env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth):
   if env in GYM_ENVS:
-    return GymEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+    return GymEnv(env, type_of_observation, seed, max_episode_length, action_repeat, bit_depth)
   elif env in CONTROL_SUITE_ENVS:
-    return ControlSuiteEnv(env, symbolic, seed, max_episode_length, action_repeat, bit_depth)
+    raise RuntimeError("Error Control Suite is not supported")
+    return ControlSuiteEnv(env, None, seed, max_episode_length, action_repeat, bit_depth)
 
 
 # Wrapper for batching environments together
@@ -259,11 +266,17 @@ class EnvBatcher():
     self.n = n
     self.envs = [env_class(*env_args, **env_kwargs) for _ in range(n)]
     self.dones = [True] * n
+    self.type_of_observation =  self.envs[0].type_of_observation
 
   # Resets every environment and returns observation
   def reset(self):
     observations = [env.reset() for env in self.envs]
     self.dones = [False] * self.n
+    if self.type_of_observation == 'augmented':
+      return (
+        torch.cat([o[0] for o in observations]),
+        torch.cat([o[1] for o in observations])
+      )
     return torch.cat(observations)
 
  # Steps/resets every environment and returns (observation, reward, done)
@@ -272,8 +285,17 @@ class EnvBatcher():
     observations, rewards, dones = zip(*[env.step(action) for env, action in zip(self.envs, actions)])
     dones = [d or prev_d for d, prev_d in zip(dones, self.dones)]  # Env should remain terminated if previously terminated
     self.dones = dones
-    observations, rewards, dones = torch.cat(observations), torch.tensor(rewards, dtype=torch.float32), torch.tensor(dones, dtype=torch.uint8)
-    observations[done_mask] = 0
+    if self.type_of_observation == 'augmented':
+      observations = (
+        torch.cat([o[0] for o in observations]),
+        torch.cat([o[1] for o in observations])
+      )
+      observations[0][done_mask] = 0
+      observations[1][done_mask] = 0
+    else:
+      observations = torch.cat(observations)
+      observations[done_mask] = 0
+    rewards, dones = torch.tensor(rewards, dtype=torch.float32), torch.tensor(dones, dtype=torch.uint8)
     rewards[done_mask] = 0
     return observations, rewards, dones
 
