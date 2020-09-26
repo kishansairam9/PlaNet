@@ -27,7 +27,7 @@ if UnityOnly:
 else:
   parser.add_argument('--env', type=str, default='Pendulum-v0', choices=GYM_ENVS + CONTROL_SUITE_ENVS, help='Gym/Control Suite environment')
 parser.add_argument('--symbolic-env', action='store_true', help='Symbolic features')
-parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T', help='Max episode length') # REDUCED ON LOCAL
+parser.add_argument('--max-episode-length', type=int, default=1000, metavar='T', help='Max episode length') # CHANGED ON LOCAL
 parser.add_argument('--experience-size', type=int, default=1000000, metavar='D', help='Experience replay size')  # Original implementation has an unlimited buffer size, but 1 million is the max experience collected anyway
 parser.add_argument('--activation-function', type=str, default='relu', choices=dir(F), help='Model activation function')
 parser.add_argument('--embedding-size', type=int, default=1024, metavar='E', help='Observation embedding size')  # Note that the default encoder for visual observations outputs a 1024D vector; for other embedding sizes an additional fully-connected layer is used
@@ -36,8 +36,8 @@ parser.add_argument('--belief-size', type=int, default=200, metavar='H', help='B
 parser.add_argument('--state-size', type=int, default=30, metavar='Z', help='State/latent size')
 parser.add_argument('--action-repeat', type=int, default=2, metavar='R', help='Action repeat')
 parser.add_argument('--action-noise', type=float, default=0.3, metavar='ε', help='Action noise')
-parser.add_argument('--episodes', type=int, default=1000, metavar='E', help='Total number of episodes') # REDUCED ON LOCAL
-parser.add_argument('--seed-episodes', type=int, default=5, metavar='S', help='Seed episodes')
+parser.add_argument('--episodes', type=int, default=1000, metavar='E', help='Total number of episodes') # CHANGED ON LOCAL
+parser.add_argument('--seed-episodes', type=int, default=5, metavar='S', help='Seed episodes') # CHANGED ON LOCAL
 parser.add_argument('--collect-interval', type=int, default=100, metavar='C', help='Collect interval')
 parser.add_argument('--batch-size', type=int, default=50, metavar='B', help='Batch size')
 parser.add_argument('--chunk-size', type=int, default=50, metavar='L', help='Chunk size')
@@ -54,12 +54,12 @@ parser.add_argument('--adam-epsilon', type=float, default=1e-4, metavar='ε', he
 parser.add_argument('--grad-clip-norm', type=float, default=1000, metavar='C', help='Gradient clipping norm')
 parser.add_argument('--planning-horizon', type=int, default=12, metavar='H', help='Planning horizon distance')
 parser.add_argument('--optimisation-iters', type=int, default=10, metavar='I', help='Planning optimisation iterations')
-parser.add_argument('--candidates', type=int, default=1000, metavar='J', help='Candidate samples per iteration') # REDUCED ON LOCAL
-parser.add_argument('--top-candidates', type=int, default=100, metavar='K', help='Number of top candidates to fit') # REDUCED ON LOCAL
+parser.add_argument('--candidates', type=int, default=1000, metavar='J', help='Candidate samples per iteration') # CHANGED ON LOCAL
+parser.add_argument('--top-candidates', type=int, default=100, metavar='K', help='Number of top candidates to fit') # CHANGED ON LOCAL
 parser.add_argument('--test', action='store_true', help='Test only')
 parser.add_argument('--test-interval', type=int, default=25, metavar='I', help='Test interval (episodes)')
 parser.add_argument('--test-episodes', type=int, default=10, metavar='E', help='Number of test episodes')
-parser.add_argument('--checkpoint-interval', type=int, default=50, metavar='I', help='Checkpoint interval (episodes)')
+parser.add_argument('--checkpoint-interval', type=int, default=50, metavar='I', help='Checkpoint interval (episodes)') # CHANGED ON LOCAL
 parser.add_argument('--checkpoint-experience', action='store_true', help='Checkpoint experience replay')
 parser.add_argument('--models', type=str, default='', metavar='M', help='Load model checkpoint')
 parser.add_argument('--experience-replay', type=str, default='', metavar='ER', help='Load experience replay')
@@ -70,11 +70,13 @@ args.overshooting_distance = min(args.chunk_size, args.overshooting_distance)  #
 
 if args.local:
   # Local machine training
-  print("Reduced vars for local machine training")
+  print("Changed vars for local machine training")
   args.max_episode_length = 300
-  args.episodes = 100
+  args.episodes = 300
   args.candidates = 200
   args.top_candidates = 20
+  args.seed_episodes = 15
+  args.checkpoint_interval = 5
 
 print(' ' * 26 + 'Options')
 for k, v in vars(args).items():
