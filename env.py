@@ -327,3 +327,4 @@ class UnityEnvBatcher(EnvBatcher):
     self.start_port = start_port or 9000
     self.envs = [env_creator(self.start_port + i) for i in range(n)]
     self.dones = [True] * n
+    self.type_of_observation = self.envs[0].type_of_observation
