@@ -302,7 +302,7 @@ class EnvBatcher():
  # Steps/resets every environment and returns (observation, reward, done)
   def step(self, actions):
     done_mask = torch.nonzero(torch.tensor(self.dones))[:, 0]  # Done mask to blank out observations and zero rewards for previously terminated environments
-    observations, rewards, dones = zip(*[env.step(action) if index not in done_mask else (([torch.zeros(self.obsdim),torch.zeros(self.obsdim)],0,True) if self.type_of_observation == 'augmented' else (torch.zeros(self.obsdim),torch.zeros(self.obsdim),True)) for index, env, action in zip(range(self.n), self.envs, actions)])
+    observations, rewards, dones = zip(*[env.step(action) if index not in done_mask else (([torch.zeros(self.obsdim),torch.zeros(self.obsdim)],0,True) if self.type_of_observation == 'augmented' else (torch.zeros(self.obsdim),0,True)) for index, env, action in zip(range(self.n), self.envs, actions)])
     self.obsdim = observations[0].shape
     dones = [d or prev_d for d, prev_d in zip(dones, self.dones)]  # Env should remain terminated if previously terminated
     self.dones = dones
@@ -327,7 +327,7 @@ class EnvBatcher():
 class UnityEnvBatcher(EnvBatcher):
   def __init__(self, env_creator, n, start_port:int =None):
     self.n = n
-    self.start_port = start_port or 20000
+    self.start_port = start_port or 22340
     self.envs = []
     for i in range(n):
       self.envs.append(env_creator(self.start_port + i))
