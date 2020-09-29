@@ -65,6 +65,7 @@ parser.add_argument('--models', type=str, default='', metavar='M', help='Load mo
 parser.add_argument('--experience-replay', type=str, default='', metavar='ER', help='Load experience replay')
 parser.add_argument('--render', action='store_true', help='Render environment')
 parser.add_argument('--local', action='store_true', help='Training Locally')
+parser.add_argument('--only-visual', action='store_true', help='Only visual observations')
 args = parser.parse_args()
 args.overshooting_distance = min(args.chunk_size, args.overshooting_distance)  # Overshooting distance cannot be greater than chunk size
 
@@ -98,7 +99,7 @@ metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': []
 
 if args.symbolic_env:
   type_of_observation = 'symbolic'
-elif args.env in GYM_ENVS + CONTROL_SUITE_ENVS:
+elif args.env in GYM_ENVS + CONTROL_SUITE_ENVS or args.only_visual:
   type_of_observation = 'not-symbolic'
 else:
   type_of_observation = 'augmented'
@@ -161,12 +162,12 @@ global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.
 free_nats = torch.full((1, ), args.free_nats, dtype=torch.float32, device=args.device)  # Allowed deviation in KL divergence
 
 def update_belief_and_act(*args, **kwargs):
-  try:
-    return _update_belief_and_act(*args, **kwargs)
-  except Exception as e:
-    print(e)
-    import pdb
-    pdb.set_trace()
+  # try:
+  return _update_belief_and_act(*args, **kwargs)
+  # except Exception as e:
+  #   print(e)
+    # import pdb
+    # pdb.set_trace()
 
 def _update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation, min_action=-inf, max_action=inf, explore=False):
   # Infer belief over current state q(s_t|o≤t,a<t) from the history
@@ -179,7 +180,7 @@ def _update_belief_and_act(args, env, planner, transition_model, encoder, belief
   if explore:
     action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
   action.clamp_(min=min_action, max=max_action)  # Clip action range
-  next_observation, reward, done = env.step(action.cpu() if isinstance(env, EnvBatcher) else action[0].cpu())  # Perform environment step (action repeats handled internally)
+  next_observation, reward, done = env.step(action.cpu() if (isinstance(env, EnvBatcher) or isinstance(env, UnityEnvBatcher)) else action[0].cpu())  # Perform environment step (action repeats handled internally)
   return belief, posterior_state, action, next_observation, reward, done
 
 
@@ -312,7 +313,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     encoder.eval()
     # Initialise parallelised test environments
     if UnityOnly:
-      def unity_gyn_emv_creator(port):
+      def unity_gyn_emv_creator(port: int):
         return UnityGymEnv(
           env_returner(args.env, port),
           type_of_observation,

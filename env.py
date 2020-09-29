@@ -86,6 +86,8 @@ class UnityGymEnv:
     return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
   
   def step(self, action):
+    if action is None:
+      return 0, 0, True
     action = action.detach().numpy()
     reward = 0
     for k in range(self.action_repeat):
@@ -300,7 +302,8 @@ class EnvBatcher():
  # Steps/resets every environment and returns (observation, reward, done)
   def step(self, actions):
     done_mask = torch.nonzero(torch.tensor(self.dones))[:, 0]  # Done mask to blank out observations and zero rewards for previously terminated environments
-    observations, rewards, dones = zip(*[env.step(action) for env, action in zip(self.envs, actions)])
+    observations, rewards, dones = zip(*[env.step(action) if index not in done_mask else (([torch.zeros(self.obsdim),torch.zeros(self.obsdim)],0,True) if self.type_of_observation == 'augmented' else (torch.zeros(self.obsdim),torch.zeros(self.obsdim),True)) for index, env, action in zip(range(self.n), self.envs, actions)])
+    self.obsdim = observations[0].shape
     dones = [d or prev_d for d, prev_d in zip(dones, self.dones)]  # Env should remain terminated if previously terminated
     self.dones = dones
     if self.type_of_observation == 'augmented':
@@ -322,9 +325,13 @@ class EnvBatcher():
 
 
 class UnityEnvBatcher(EnvBatcher):
-  def __init__(self, env_creator, n, start_port=None):
+  def __init__(self, env_creator, n, start_port:int =None):
     self.n = n
-    self.start_port = start_port or 9000
-    self.envs = [env_creator(self.start_port + i) for i in range(n)]
+    self.start_port = start_port or 20000
+    self.envs = []
+    for i in range(n):
+      self.envs.append(env_creator(self.start_port + i))
+      print(5 * '-' + '>' + 5 * ' ' + f"started {i} on port {self.start_port+i}")
+    # self.envs = [env_creator(self.start_port + i) for i in range(n)]
     self.dones = [True] * n
     self.type_of_observation = self.envs[0].type_of_observation
